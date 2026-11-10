@@ -1,71 +1,85 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { FaArrowLeft, FaPlus, FaMinus, FaTrash } from "react-icons/fa";
-import { Link } from "react-router-dom";
+import { useParams, Link,useNavigate } from "react-router-dom";
+import axios from "axios";
+
+
 
 const CreateInvoice = () => {
+  const navigate = useNavigate();
+  const { saleId } = useParams();
   const [customerInfo, setCustomerInfo] = useState({
     name: "",
     phone: "",
     email: "",
     address: "",
   });
-
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [columns, setColumns] = useState([
     { id: "product", name: "Product", type: "text", isCustom: false },
     { id: "unit", name: "Unit", type: "number", isCustom: false },
-    {
-      id: "sellingPrice",
-      name: "Selling Price",
-      type: "number",
-      isCustom: false,
-    },
+    { id: "sellingPrice",name: "Selling Price",type: "number",isCustom: false },
     { id: "cost", name: "Cost", type: "number", isCustom: false },
-  ]);
-
-  const [rows, setRows] = useState([
-    { id: "1", product: "click fan", unit: 2, sellingPrice: 3000, cost: 2800 },
-    { id: "2", product: "light bulb", unit: 2, sellingPrice: 600, cost: 500 },
-    { id: "3", product: "table fan", unit: 1, sellingPrice: 1500, cost: 1200 },
   ]);
 
   const [showAddField, setShowAddField] = useState(false);
   const [newColumnName, setNewColumnName] = useState("");
   const [isPercentage, setIsPercentage] = useState(false);
 
-  const calculateModifiedSellingPrice = (row) => {
-    let sellingPrice = Number(row.sellingPrice) || 0;
+  useEffect(() => {
+    const fetchSaleDetails = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await axios.get(
+          `http://localhost:8000/api/sales/${saleId}/`,
+          {
+            headers: { Authorization: `Token ${token}` },
+          }
+        );
 
-    columns.forEach((column) => {
-      if (
-        column.operation &&
-        row[column.id] !== undefined &&
-        row[column.id] !== ""
-      ) {
-        const fieldValue = Number(row[column.id]) || 0;
+        const sale = res.data;
 
-        if (column.isPercentage) {
-          const percentageAmount = (sellingPrice * fieldValue) / 100;
-          sellingPrice =
-            column.operation === "add"
-              ? sellingPrice + percentageAmount
-              : sellingPrice - percentageAmount;
-        } else {
-          sellingPrice =
-            column.operation === "add"
-              ? sellingPrice + fieldValue
-              : sellingPrice - fieldValue;
-        }
+
+        setCustomerInfo({
+          name: sale.customer_name || "Walk-in Customer",
+          phone: sale.customer?.phone || "",
+          email: sale.customer?.email || "",
+          address: sale.customer?.address || "",
+        });
+        console.log(sale.sale_items);
+        
+        const mappedItems = (sale.sale_items || []).map((item) => ({
+          id: item.id,
+          product: item.product.name,
+          unit: item.quantity,
+          sellingPrice: parseFloat(item.unit_price),
+          cost: parseFloat(item.product.cost_price),
+        }));
+        setRows(mappedItems);
+      } catch (err) {
+        console.error("Error fetching sale details:", err);
+      } finally {
+        setLoading(false);
       }
-    });
+    };
 
-    return sellingPrice;
-  };
+    fetchSaleDetails();
+  }, [saleId]);
+  console.log(customerInfo)
+  console.log(rows)
+  if (loading) return <div className="p-6">Loading...</div>;
 
-  const calculateProfit = (row) => {
-    const modifiedSellingPrice = calculateModifiedSellingPrice(row);
-    const cost = Number(row.cost) || 0;
-    const unit = Number(row.unit) || 1;
-    return ((modifiedSellingPrice - cost) * unit).toFixed(2);
+  
+
+
+  const getColumnHeader = (column) => {
+    let headerText = column.name;
+    if (column.operation) {
+      const symbol = column.operation === "add" ? "+" : "-";
+      headerText += ` (${symbol}${column.isPercentage ? "%" : ""})`;
+    }
+    return headerText;
   };
 
   const addColumn = (operation) => {
@@ -94,8 +108,8 @@ const CreateInvoice = () => {
       sellingPrice: "",
       cost: "",
     };
-    columns.forEach((column) => {
-      if (column.isCustom) newRow[column.id] = "";
+    columns.forEach((col) => {
+      if (col.isCustom) newRow[col.id] = "";
     });
     setRows([...rows, newRow]);
   };
@@ -117,13 +131,39 @@ const CreateInvoice = () => {
     );
   };
 
-  const getColumnHeader = (column) => {
-    let headerText = column.name;
-    if (column.operation) {
-      const symbol = column.operation === "add" ? "+" : "-";
-      headerText += ` (${symbol}${column.isPercentage ? "%" : ""})`;
-    }
-    return headerText;
+  const calculateModifiedSellingPrice = (row) => {
+    let sellingPrice = Number(row.sellingPrice) || 0;
+
+    columns.forEach((column) => {
+      if (
+        column.operation &&
+        row[column.id] !== undefined &&
+        row[column.id] !== ""
+      ) {
+        const fieldValue = Number(row[column.id]) || 0;
+        if (column.isPercentage) {
+          const percentageAmount = (sellingPrice * fieldValue) / 100;
+          sellingPrice =
+            column.operation === "add"
+              ? sellingPrice + percentageAmount
+              : sellingPrice - percentageAmount;
+        } else {
+          sellingPrice =
+            column.operation === "add"
+              ? sellingPrice + fieldValue
+              : sellingPrice - fieldValue;
+        }
+      }
+    });
+
+    return sellingPrice;
+  };
+
+  const calculateProfit = (row) => {
+    const modifiedSellingPrice = calculateModifiedSellingPrice(row);
+    const cost = Number(row.cost) || 0;
+    const unit = Number(row.unit) || 1;
+    return ((modifiedSellingPrice - cost) * unit).toFixed(2);
   };
 
   const calculateTotals = () => {
@@ -143,31 +183,44 @@ const CreateInvoice = () => {
 
   const { subtotal, tax, total, totalProfit } = calculateTotals();
 
-  const handleCreateInvoice = () => {
-    alert("Invoice created successfully!");
-    console.log("Invoice:", {
-      customerInfo,
-      rows,
-      subtotal,
-      tax,
-      total,
-      totalProfit,
-    });
-  };
+  const handleCreateInvoice = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    const totals = calculateTotals();
+
+    const payload = {
+      total_amount: totals.total,
+      profit_amount: totals.totalProfit,
+    };
+
+    await axios.post(
+      `http://localhost:8000/api/sales/${saleId}/confirm/`,
+      payload,
+      { headers: { Authorization: `Token ${token}` } }
+    );
+
+    alert("Invoice confirmed and sale updated successfully!");
+    navigate("/pending-invoices");
+  } catch (err) {
+    console.error("Error confirming invoice:", err.response?.data || err);
+    alert("Failed to confirm invoice: " + JSON.stringify(err.response?.data));
+  }
+};
+
 
   return (
-    <div className="w-full min-h-screen bg-gray-50 p-6 space-y-6">
+    <div className="w-full min-h-screen bg-white p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 mb-10">
         <Link
-          to="/reports"
+          to="/pending-invoices"
           className="p-2 text-black hover:text-blue-700 rounded"
         >
           <FaArrowLeft />
         </Link>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Create Invoice</h1>
-          <p className="text-gray-600">
+        <div className="m-auto">
+          <h1 className="text-3xl font-bold text-center mb-2">Create Invoice</h1>
+          <p className="text-gray-500 text-center">
             Create a new customizable invoice for customers
           </p>
         </div>
@@ -270,9 +323,9 @@ const CreateInvoice = () => {
           <div className="overflow-x-auto">
             <table className="w-full border">
               <thead>
-                <tr className="bg-gray-100">
+                <tr className="bg-green-700 text-white">
                   {columns.map((col) => (
-                    <th key={col.id} className="border px-3 py-2 text-left">
+                    <th key={col.id} className="border px-3 py-2 text-center text-xs">
                       {getColumnHeader(col)}
                       {col.isCustom && (
                         <button
@@ -285,8 +338,8 @@ const CreateInvoice = () => {
                     </th>
                   ))}
                   
-                  <th className="border px-3 py-2">Profit</th>
-                  <th className="border px-3 py-2">Delete</th>
+                  <th className="border px-3 py-2 text-xs">Profit</th>
+                  <th className="border px-3 py-2 text-xs">Delete</th>
                 
                 </tr>
               </thead>
@@ -346,10 +399,7 @@ const CreateInvoice = () => {
               onClick={handleCreateInvoice}
               className="flex-1 bg-blue-600 text-white py-2 rounded"
             >
-              Create Invoice
-            </button>
-            <button className="flex-1 border py-2 rounded">
-              Save as Draft
+              Confirm Invoice
             </button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import uuid
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 # Create your models here.
 class Profile(models.Model):
@@ -14,6 +15,12 @@ class Profile(models.Model):
     
     def __str__(self):
         return f"{self.full_name}"
+    @property
+    def image_url(self):
+        if self.profile_pic:
+         return self.profile_pic.url
+        return ""
+
 
 class Shop(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -28,26 +35,11 @@ class Shop(models.Model):
 
     def __str__(self):
         return f"{self.name}"
-
-class ShopMembership(models.Model):
-    ROLE_CHOICES = [
-        ('owner', 'Owner'),
-        ('employee', 'Employee')
-    ]
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    shop = models.ForeignKey(Shop, on_delete=models.CASCADE)
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='employee')
-
-    def __str__(self):
-        return f"{self.user.username} - {self.shop.name} ({self.role})"
-
-
+    
 class Branch(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    shop = models.ForeignKey(Shop, on_delete=models.CASCADE)
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="branches")
     branch_name = models.CharField(max_length=100)
-    employee = models.CharField(max_length=255,blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
     location = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -55,9 +47,38 @@ class Branch(models.Model):
     def __str__(self):
         return f"{self.branch_name} - {self.shop.name}"
 
+
+class ShopMembership(models.Model):
+    ROLE_CHOICES = [
+        ('owner', 'Owner'),
+        ('employee', 'Employee'),
+    ]
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="memberships")
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="memberships")
+    branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, blank=True, related_name="memberships")
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='employee')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ('user', 'shop', 'branch')  # user can be in multiple branches of same shop
+
+    def __str__(self):
+        branch_name = self.branch.branch_name if self.branch else "No Branch"
+        return f"{self.user.username} - {self.shop.name} ({branch_name}, {self.role}, {self.status})"
+
+
 class Customer(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE)
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.CASCADE)  
     full_name = models.CharField(max_length=100)
     phone = models.CharField(max_length=20, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
@@ -70,23 +91,29 @@ class Customer(models.Model):
 
 class Category(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100)
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE,blank=True, null=True)
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.CASCADE)    
     description = models.TextField(blank=True, null=True)  # optional description
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        unique_together = ('shop', 'name')
         ordering = ["name"]
 
     def __str__(self):
-        return self.name
+        if self.branch:
+            return f"{self.name} ({self.branch.branch_name}->({self.shop.name}))"
+        return f"{self.name} ({self.shop.name})"
 
 class Product(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     shop = models.ForeignKey("Shop", on_delete=models.CASCADE, related_name="products")
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.CASCADE)  
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True, related_name="products")
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True) 
-    cost_price = models.DecimalField(max_digits=10, decimal_places=2)
+    cost_price = models.DecimalField(max_digits=10, decimal_places=2,default=0, blank=True, null=True)
     selling_price = models.DecimalField(max_digits=10, decimal_places=2)
     quantity = models.IntegerField(default=0)
     image = models.ImageField(upload_to="products/", blank=True, null=True)
@@ -100,22 +127,28 @@ class Product(models.Model):
         return f"{self.name} ({self.shop.name})"
 
 class Sale(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("completed", "Completed"),
+        ("cancelled", "Cancelled"),
+    ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE)
     employee = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
-    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True)
+    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True) 
     branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, blank=True)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     profit_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     invoice_number = models.CharField(max_length=100, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Sale {self.invoice_number} - {self.shop.name}"
+        return f"Sale {self.invoice_number} - {self.shop.name} ({self.status})"
 
 class SaleItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    sale = models.ForeignKey(Sale, on_delete=models.CASCADE)
+    sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name="sale_items")
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     quantity = models.IntegerField()
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -140,6 +173,7 @@ class Invoice(models.Model):
 class Expense(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE)
+    branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, blank=True)
     title = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     date = models.DateField()
@@ -147,4 +181,4 @@ class Expense(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.title} - {self.amount}"
+        return f"{self.title} - {self.amount} - {self.shop.name}"

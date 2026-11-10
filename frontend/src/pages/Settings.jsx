@@ -1,28 +1,23 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { FaPlus, FaTrash, FaSave, FaExclamationTriangle } from "react-icons/fa";
-
-const mockBranches = [
-  {
-    id: "1",
-    name: "Main Store",
-    address: "123 Main Street, City, State 12345",
-    phone: "+1 (555) 123-4567",
-    manager: "Anamina",
-    status: "No",
-  },
-];
+import { useShopRole } from "../components/ShopRoleContext";
+import {
+  FaPlus,
+  FaTrash,
+  FaSave,
+  FaExclamationTriangle,
+  FaArchive,
+  FaUpload,
+} from "react-icons/fa";
 
 const API_BASE = "http://localhost:8000/api";
 
 const Settings = () => {
-  const [branches, setBranches] = useState(mockBranches);
+  const [branches, setBranches] = useState([]);
   const [newBranch, setNewBranch] = useState({
-    name: "",
-    address: "",
+    branch_name: "",
+    location: "",
     phone: "",
-    manager: "",
-    status: "Active",
   });
 
   const [shopData, setShopData] = useState({
@@ -33,8 +28,6 @@ const Settings = () => {
     email: "",
     shop_logo: null,
   });
-
-  const [loading, setLoading] = useState(false);
   const [selectedBranchId, setSelectedBranchId] = useState("");
 
   // Fetch shop data
@@ -42,9 +35,12 @@ const Settings = () => {
     const fetchShop = async () => {
       try {
         const token = localStorage.getItem("token");
-        const res = await axios.get(`${API_BASE}/shops/me/`, {
-          headers: { Authorization: `Token ${token}` },
-        });
+        const res = await axios.get(
+          `${API_BASE}/${canJoinShop ? "my-shop/" : "shops/me/"}`,
+          {
+            headers: { Authorization: `Token ${token}` },
+          }
+        );
         setShopData(res.data);
       } catch (err) {
         if (err.response?.status === 404) {
@@ -64,24 +60,64 @@ const Settings = () => {
     fetchShop();
   }, []);
 
+  // Fetch branch
+  useEffect(() => {
+    const fetchBranches = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await axios.get(`${API_BASE}/branches/`, {
+          headers: { Authorization: `Token ${token}` },
+        });
+        setBranches(res.data);
+      } catch (err) {
+        console.error("Error fetching branches:", err);
+      }
+    };
+    fetchBranches();
+  }, []);
+
   // Add branch
-  const addBranch = (e) => {
+  const addBranch = async (e) => {
     e.preventDefault();
-    if (!newBranch.name) return;
-    setBranches([...branches, { ...newBranch, id: Date.now().toString() }]);
-    setNewBranch({
-      name: "",
-      address: "",
-      phone: "",
-      manager: "",
-      status: "Active",
-    });
+    if (!newBranch.branch_name) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        `${API_BASE}/branches/`,
+        {
+          branch_name: newBranch.branch_name,
+          location: newBranch.location,
+          phone: newBranch.phone,
+        },
+        { headers: { Authorization: `Token ${token}` } }
+      );
+
+      setBranches([...branches, res.data]); // use response from backend
+      setNewBranch({
+        branch_name: "",
+        location: "",
+        phone: "",
+      });
+    } catch (err) {
+      console.error("Error adding branch:", err.response?.data || err.message);
+      alert("Failed to add branch: " + JSON.stringify(err.response?.data));
+    }
   };
 
-  // Delete branch
-  const deleteBranch = (id) => {
-    setBranches(branches.filter((branch) => branch.id !== id));
-    if (selectedBranchId === id) setSelectedBranchId("");
+  // Delete branch (DELETE API call)
+  const deleteBranch = async (id) => {
+    try {
+      const token = localStorage.getItem("token");
+      await axios.delete(`${API_BASE}/branches/${id}/`, {
+        headers: { Authorization: `Token ${token}` },
+      });
+
+      setBranches(branches.filter((branch) => branch.id !== id));
+      if (selectedBranchId === id) setSelectedBranchId("");
+    } catch (err) {
+      console.error("Error deleting branch:", err);
+    }
   };
 
   // Handle shop form changes
@@ -122,6 +158,108 @@ const Settings = () => {
     }
   };
 
+  //add category
+  const [newCategory, setNewCategory] = useState({
+    name: "",
+    description: "",
+  });
+
+  const handleCategoryChange = (e) => {
+    const { name, value } = e.target;
+    setNewCategory({ ...newCategory, [name]: value });
+  };
+
+  const handleCategorySubmit = async (e) => {
+    e.preventDefault();
+    if (!newCategory.name) {
+      alert("Category name is required!");
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        `${API_BASE}/categories/`,
+        {
+          ...newCategory,
+          shop: shopData.id, // link category to current shop
+        },
+        {
+          headers: {
+            Authorization: `Token ${token}`,
+          },
+        }
+      );
+
+      alert("Category added successfully!");
+      setNewCategory({ name: "", description: "" }); // reset form
+    } catch (err) {
+      console.error("Category save error:", err.response?.data || err);
+      alert("Failed to add category");
+    }
+  };
+
+  const [shopQuery, setShopQuery] = useState("");
+  const [shopResults, setShopResults] = useState([]);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+
+  // search shops by name
+  const handleShopSearch = async () => {
+    if (!shopQuery) return;
+    setLoadingSearch(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.get(`${API_BASE}/shop_search/`, {
+        headers: { Authorization: `Token ${token}` },
+        params: { q: shopQuery },
+      });
+      setShopResults(res.data);
+    } catch (err) {
+      console.error("Search error:", err);
+      setShopResults([]);
+    } finally {
+      setLoadingSearch(false);
+    }
+  };
+
+  // send join request
+  const handleJoinRequest = async (shopId) => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await axios.post(
+        `${API_BASE}/join_shop/`,
+        { shop: shopId },
+        { headers: { Authorization: `Token ${token}` } }
+      );
+      alert("Join request sent successfully!");
+    } catch (err) {
+      console.error("Join request error:", err.response?.data || err);
+      alert(err.response?.data?.error || "Failed to send join request");
+    }
+  };
+  //check membership
+  const [canJoinShop, setCanJoinShop] = useState(true);
+  const token = localStorage.getItem("token");
+  useEffect(() => {
+    const fetchMembershipStatus = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await axios.get(
+          "http://127.0.0.1:8000/api/check-membership/",
+          { headers: { Authorization: `Token ${token}` } }
+        );
+        setCanJoinShop(res.data.can_join_shop);
+      } catch (err) {
+        console.error("Error fetching membership status:", err);
+      }
+    };
+
+    fetchMembershipStatus();
+  }, [token]);
+
+  //check shop role
+  const { shopRole, approveEmployee, loading } = useShopRole();
+
   return (
     <div className="min-h-screen bg-white p-6">
       <div className="max-w-6xl mx-auto">
@@ -144,20 +282,20 @@ const Settings = () => {
                     <span className="font-medium text-gray-600">Name:</span>
                     <span className="text-gray-800">{shopData.name}</span>
                   </div>
-                  </div>
-                  <div className="space-y-3">
+                </div>
+                <div className="space-y-3">
                   <div className="flex justify-between border-b pb-1">
                     <span className="font-medium text-gray-600">Email:</span>
                     <span className="text-gray-800">{shopData.email}</span>
                   </div>
-                  </div>
-                  <div className="space-y-3">
+                </div>
+                <div className="space-y-3">
                   <div className="flex justify-between border-b pb-1">
                     <span className="font-medium text-gray-600">Phone:</span>
                     <span className="text-gray-800">{shopData.phone}</span>
                   </div>
-                  </div>
-                  <div className="space-y-3">
+                </div>
+                <div className="space-y-3">
                   <div className="flex justify-between border-b pb-1">
                     <span className="font-medium text-gray-600">Address:</span>
                     <span className="text-gray-800">{shopData.address}</span>
@@ -168,57 +306,86 @@ const Settings = () => {
               <p className="text-gray-500">No shop created yet.</p>
             )}
           </div>
-
-          {/* Create Branch */}
-          {shopData.owner ? (
+          {/*add category jsx */}
+          {shopData.owner && (
             <div className="bg-white shadow rounded-lg p-6">
               <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <FaPlus /> Create New Branch
+                <FaPlus /> Add New Category
               </h3>
-              <form onSubmit={addBranch} className="space-y-4">
+              <form onSubmit={handleCategorySubmit} className="space-y-4">
                 <input
                   type="text"
-                  placeholder="Branch Name"
-                  value={newBranch.name}
-                  onChange={(e) =>
-                    setNewBranch({ ...newBranch, name: e.target.value })
-                  }
+                  name="name"
+                  placeholder="Category Name"
+                  value={newCategory.name}
+                  onChange={handleCategoryChange}
                   className="w-full border p-2 rounded"
                 />
-                <input
-                  type="text"
-                  placeholder="Branch Address"
-                  value={newBranch.address}
-                  onChange={(e) =>
-                    setNewBranch({ ...newBranch, address: e.target.value })
-                  }
-                  className="w-full border p-2 rounded"
-                />
-                <input
-                  type="text"
-                  placeholder="Phone"
-                  value={newBranch.phone}
-                  onChange={(e) =>
-                    setNewBranch({ ...newBranch, phone: e.target.value })
-                  }
-                  className="w-full border p-2 rounded"
-                />
-                <input
-                  type="text"
-                  placeholder="Manager Name"
-                  value={newBranch.manager}
-                  onChange={(e) =>
-                    setNewBranch({ ...newBranch, manager: e.target.value })
-                  }
+                <textarea
+                  name="description"
+                  placeholder="Description"
+                  value={newCategory.description}
+                  onChange={handleCategoryChange}
                   className="w-full border p-2 rounded"
                 />
                 <button
                   type="submit"
-                  className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+                  className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2 rounded hover:bg-green-700"
                 >
-                  <FaSave /> Create Branch
+                  <FaArchive /> Add
                 </button>
               </form>
+            </div>
+          )}
+
+          {/* Create Branch */}
+          {shopData.owner || !canJoinShop ? (
+            <div>
+              {shopRole?.role != "employee" && (
+                <div className="bg-white shadow rounded-lg p-6">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <FaPlus /> Create New Branch
+                  </h3>
+                  <form onSubmit={addBranch} className="space-y-4">
+                    <input
+                      type="text"
+                      placeholder="Branch Name"
+                      value={newBranch.branch_name}
+                      onChange={(e) =>
+                        setNewBranch({
+                          ...newBranch,
+                          branch_name: e.target.value,
+                        })
+                      }
+                      className="w-full border p-2 rounded"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Branch Location"
+                      value={newBranch.location}
+                      onChange={(e) =>
+                        setNewBranch({ ...newBranch, location: e.target.value })
+                      }
+                      className="w-full border p-2 rounded"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Phone"
+                      value={newBranch.phone}
+                      onChange={(e) =>
+                        setNewBranch({ ...newBranch, phone: e.target.value })
+                      }
+                      className="w-full border p-2 rounded"
+                    />
+                    <button
+                      type="submit"
+                      className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+                    >
+                      <FaSave /> Create Branch
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
           ) : (
             <div className="bg-white shadow rounded-lg p-6">
@@ -259,12 +426,20 @@ const Settings = () => {
                   onChange={handleChange}
                   className="w-full border p-2 rounded"
                 />
+                <label
+                  htmlFor="shop_logo"
+                  className="flex items-center px-3 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 transition"
+                >
+                  <FaUpload className="mr-2" />
+                  Upload
+                </label>
                 <input
                   type="file"
+                  id="shop_logo"
                   name="shop_logo"
                   accept="image/*"
                   onChange={handleChange}
-                  className="w-full"
+                  className="hidden"
                 />
                 <button
                   type="submit"
@@ -277,72 +452,114 @@ const Settings = () => {
             </div>
           )}
 
-          {/* Branch Management */}
-          <div className="bg-white shadow rounded-lg p-6 md:col-span-2">
-            <h3 className="text-lg font-semibold mb-4">Branch Management</h3>
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left py-2">Branch Name</th>
-                  <th className="text-left py-2">Manager</th>
-                  <th className="text-left py-2">Phone</th>
-                  <th className="text-left py-2">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {branches.map((branch) => (
-                  <tr key={branch.id} className="border-b text-start">
-                    <td className="py-2">
-                      <p className="font-medium">{branch.name}</p>
-                      <p className="text-gray-500 text-xs">{branch.address}</p>
-                    </td>
-                    <td>{branch.manager}</td>
-                    <td>{branch.phone}</td>
-                    <td>
-                      <span
-                        className={`px-2 py-1 text-xs rounded ${
-                          branch.status === "Active"
-                            ? "bg-green-100 text-green-600"
-                            : "bg-red-100 text-red-600"
-                        }`}
-                      >
-                        {branch.status}
-                      </span>
-                    </td>
-                  </tr>
+          {canJoinShop && (
+            <div className="bg-white shadow rounded-lg p-6">
+              <h3 className="text-lg font-semibold mb-4">Join a Shop</h3>
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  placeholder="Search shop by name"
+                  value={shopQuery}
+                  onChange={(e) => setShopQuery(e.target.value)}
+                  className="w-full border p-2 rounded"
+                />
+                <button
+                  onClick={handleShopSearch}
+                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  Search
+                </button>
+              </div>
+
+              {loadingSearch && <p>Loading...</p>}
+
+              <ul className="space-y-2">
+                {shopResults.map((shop) => (
+                  <li
+                    key={shop.id}
+                    className="flex justify-between items-center border p-2 rounded"
+                  >
+                    <div>
+                      <p className="font-medium">{shop.name}</p>
+                      <p className="text-gray-500 text-sm">{shop.address}</p>
+                    </div>
+                    <button
+                      onClick={() => handleJoinRequest(shop.id)}
+                      className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                    >
+                      Request to Join
+                    </button>
+                  </li>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </ul>
+            </div>
+          )}
+
+          {/* Branch Management */}
+          {shopRole?.role == "owner" && (
+            <div className="bg-white shadow rounded-lg p-6">
+              <h3 className="text-lg font-semibold mb-4">Branch Management</h3>
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left py-2">Branch Name</th>
+                    <th className="text-left py-2">Phone</th>
+                    <th className="text-left py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {branches.map((branch) => (
+                    <tr key={branch.id} className="border-b text-start">
+                      <td className="py-2">
+                        <p className="font-medium">{branch.branch_name}</p>
+                        <p className="text-gray-500 text-xs">
+                          {branch.location}
+                        </p>
+                      </td>
+                      <td>{branch.phone}</td>
+                      <td>
+                        <span
+                          className={`px-2 py-1 text-xs rounded bg-green-100 text-green-600}`}
+                        >{new Date(branch.created_at).toLocaleDateString("en-GB", {  day: "2-digit", month: "short",year: "numeric", })}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Delete Branch */}
-          <div className="bg-red-50 border border-red-200 shadow rounded-lg p-6 md:col-span-2">
-            <h3 className="text-lg font-semibold mb-2 text-red-700 flex items-center gap-2">
-              <FaExclamationTriangle /> Delete Branch
-            </h3>
-            <p className="text-sm text-red-600 mb-4">
-              Permanently delete a branch. This action cannot be undone.
-            </p>
-            <select
-              className="w-full border p-2 rounded mb-4"
-              value={selectedBranchId}
-              onChange={(e) => setSelectedBranchId(e.target.value)}
-            >
-              <option value="">Select a branch</option>
-              {branches.map((branch) => (
-                <option key={branch.id} value={branch.id}>
-                  {branch.name}
-                </option>
-              ))}
-            </select>
-            <button
-              disabled={!selectedBranchId}
-              onClick={() => deleteBranch(selectedBranchId)}
-              className="w-full flex items-center justify-center gap-2 bg-red-600 text-white py-2 rounded hover:bg-red-700"
-            >
-              <FaTrash /> Delete Branch
-            </button>
-          </div>
+          {shopRole?.role == "owner" && (
+            <div className="bg-red-50 border border-red-200 shadow rounded-lg p-6 md:col-span-2">
+              <h3 className="text-lg font-semibold mb-2 text-red-700 flex items-center gap-2">
+                <FaExclamationTriangle /> Delete Branch
+              </h3>
+              <p className="text-sm text-red-600 mb-4">
+                Permanently delete a branch. This action cannot be undone.
+              </p>
+              <select
+                className="w-full border p-2 rounded mb-4 text-black"
+                value={selectedBranchId}
+                onChange={(e) => setSelectedBranchId(e.target.value)}
+              >
+                <option  className=" text-black" value="">Select a branch</option>
+                {branches.map((branch) => (
+                  <option   key={branch.id} value={branch.id}>
+                    {branch.branch_name}
+                  </option>
+                ))}
+              </select>
+              <button
+                disabled={!selectedBranchId}
+                onClick={() => deleteBranch(selectedBranchId)}
+                className="w-full flex items-center justify-center gap-2 bg-red-600 text-white py-2 rounded hover:bg-red-700"
+              >
+                <FaTrash /> Delete Branch
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
